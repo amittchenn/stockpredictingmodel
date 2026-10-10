@@ -78,11 +78,37 @@ rounding-error improvements out-of-sample — and the train-optimal lambda somet
 - **Tune on train, confirm on test** — picking a hyperparameter by its test-set score is
   peeking, and will fool you.
 
+## Next-day price forecast with gradient boosting (`price_model.py`)
+
+A second experiment: predict tomorrow's closing price with XGBoost and see whether it
+beats the naive forecast (tomorrow's close = today's close).
+
+- **Ticker and history are chosen at runtime**: the script asks for a ticker and a
+  `yfinance` period (`1y`, `5y`, `max`, ...) and re-prompts on invalid input.
+- **Predict the return, not the price**: the model predicts tomorrow's return and converts
+  it with `close × (1 + predicted return)`. Trees can't extrapolate, so a model trained
+  on raw prices can never predict a price above its training range.
+- **Features**: today's return and the close relative to its 20- and 50-day SMAs (ratios
+  again, not price levels).
+- **Loss**: `reg:absoluteerror`, so one-off spikes (e.g. ORCL's +36% day in Sept 2025)
+  don't dominate training the way they do with squared error.
+- **Train / validation / test split (60/20/20, chronological)**: three hyperparameter
+  settings, from "original" to "very cautious", are compared on validation only. The
+  winner is retrained on train + validation and scored once on test.
+- **Reported metrics**: price MAE vs. the naive forecast, direction accuracy, and the
+  test period's "always up" baseline, plus a prediction for the next close.
+
+The first runs on ORCL showed the same pattern as the direction experiment: the
+unregularized model made large, confident daily calls (predicted-return std ≈ 3%, close to
+the real returns' own spread) and lost to the naive forecast. The more cautious settings
+are there to pull it back toward "no change" unless the features carry real signal.
+
 ## Running it
 
 ```bash
-pip install pandas numpy yfinance pandas_ta scikit-learn
+pip install pandas numpy yfinance pandas_ta scikit-learn xgboost
 python stock.py
+python price_model.py
 ```
 
 Change the ticker and history at the top of the file:
