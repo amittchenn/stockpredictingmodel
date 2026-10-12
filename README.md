@@ -81,7 +81,7 @@ rounding-error improvements out-of-sample — and the train-optimal lambda somet
 ## Running it
 
 ```bash
-pip install pandas numpy yfinance pandas_ta scikit-learn
+pip install pandas numpy yfinance scikit-learn
 python stock.py
 ```
 

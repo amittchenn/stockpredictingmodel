@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import pandas_ta as ta
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 from sklearn.ensemble import RandomForestClassifier
@@ -62,16 +61,33 @@ def build_data_set(ticker: str, years: int) -> pd.DataFrame:
 def add_tech_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    df['sma_10'] = ta.sma(df['Close'], length=10)
-    df['sma_20'] = ta.sma(df['Close'], length=20)
-    df['ema_10'] = ta.ema(df['Close'], length=10)
-    df['rsi_14'] = ta.rsi(df['Close'], length=14)
+    close = df['Close']
 
-    macd = ta.macd(df['Close'])
-    df = pd.concat([df, macd], axis=1)
+    df['sma_10'] = close.rolling(10).mean()
+    df['sma_20'] = close.rolling(20).mean()
+    df['ema_10'] = close.ewm(span=10, adjust=False).mean()
 
-    bbands = ta.bbands(df['Close'], length=20)
-    df = pd.concat([df, bbands], axis=1)
+    # RSI(14), Wilder's smoothing (alpha = 1/length), same as pandas_ta's default
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+    df['rsi_14'] = 100 - 100 / (1 + gain / loss)
+
+    # MACD(12, 26, 9): fast EMA - slow EMA, signal = EMA(9) of that, histogram = difference
+    ema_12 = close.ewm(span=12, adjust=False).mean()
+    ema_26 = close.ewm(span=26, adjust=False).mean()
+    df['MACD_12_26_9']  = ema_12 - ema_26
+    df['MACDs_12_26_9'] = df['MACD_12_26_9'].ewm(span=9, adjust=False).mean()
+    df['MACDh_12_26_9'] = df['MACD_12_26_9'] - df['MACDs_12_26_9']
+
+    # Bollinger Bands(20, 2): middle = SMA, upper/lower = +/- 2 std, bandwidth and %B
+    bb_mid = close.rolling(20).mean()
+    bb_std = close.rolling(20).std(ddof=0)
+    df['BBM_20_2.0'] = bb_mid
+    df['BBU_20_2.0'] = bb_mid + 2 * bb_std
+    df['BBL_20_2.0'] = bb_mid - 2 * bb_std
+    df['BBB_20_2.0'] = (df['BBU_20_2.0'] - df['BBL_20_2.0']) / bb_mid * 100
+    df['BBP_20_2.0'] = (close - df['BBL_20_2.0']) / (df['BBU_20_2.0'] - df['BBL_20_2.0'])
 
     df['close_vs_sma10'] = df['Close'] / df['sma_10'] - 1
     df['close_vs_sma20'] = df['Close'] / df['sma_20'] - 1
