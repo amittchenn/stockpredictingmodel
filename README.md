@@ -27,7 +27,7 @@ several models with time-series-correct methodology:
 4. **Split** — strictly **chronological** (train on the past, test on the recent tail).
    No shuffling, so the model never sees the future.
 5. **Models** — Logistic Regression / Random Forest (direction), Random Forest Regressor
-   vs. Persistence vs. EWMA (volatility).
+   and Gradient Boosting Regressor vs. Persistence vs. EWMA (volatility).
 6. **Evaluation** — accuracy vs. a majority-class baseline (direction); MAE and R² vs.
    persistence and EWMA baselines (volatility); `TimeSeriesSplit` cross-validation
    throughout.

@@ -6,7 +6,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 
 TICKER = 'MSFT'
@@ -144,6 +144,27 @@ for name, fc in [('Persistence', persistence_fc),
                  ('EWMA',        ewma_fc),
                  ('RandomForest', rf_fc)]:
     print(f"{name:13s}  MAE: {mean_absolute_error(truth, fc):.5f}   R²: {r2_score(truth, fc):.3f}")
+
+# --- Gradient boosting: many shallow trees, each correcting the last one's errors ---
+gbr = GradientBoostingRegressor(
+    n_estimators=300,      # more trees, smaller steps -> less overfitting on noisy rows
+    learning_rate=0.03,
+    max_depth=3,           # weak learners; the forest uses deep trees, boosting should not
+    subsample=0.8,         # each tree sees 80% of rows, same variance reduction as bagging
+    random_state=42,
+)
+gbr.fit(X_train, Y_train)
+gbr_pred = gbr.predict(X_test)
+gbr_fc = test['10d_volatility'] * np.exp(gbr_pred)
+
+print("\n--- Gradient Boosting (volatility) ---")
+print(f"Model MAE (log-vol change): {mean_absolute_error(Y_test, gbr_pred):.5f}")
+print(f"Model R²  (log-vol change): {r2_score(Y_test, gbr_pred):.3f}")
+print(f"{'GradBoost':13s}  MAE: {mean_absolute_error(truth, gbr_fc):.5f}   R²: {r2_score(truth, gbr_fc):.3f}")
+
+gb_scores = cross_val_score(gbr, X, Y, cv=tscv, scoring='r2')
+print("GB CV R² scores:", gb_scores)
+print("Mean GB CV R²:", gb_scores.mean())
 
 train = result_clean.iloc[:split_index]
 test  = result_clean.iloc[split_index:]
