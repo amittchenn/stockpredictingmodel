@@ -43,17 +43,24 @@ data, the edge would already be arbitraged away.
 ### 2. Volatility is forecastable — but simple models win
 Forecasting future 5-day realized volatility, compared on identical out-of-sample data:
 
-| Ticker | Persistence MAE | EWMA MAE | Random Forest MAE | Winner |
-|--------|-----------------|----------|-------------------|--------|
-| ORCL   | 0.01581         | **0.01425** | 0.01636        | EWMA |
-| MU     | 0.01692         | **0.01589** | 0.01657        | EWMA |
-| MSFT   | 0.00816         | 0.00760  | **0.00676**       | Random Forest |
+| Ticker | Persistence MAE | EWMA MAE | Random Forest MAE | Gradient Boosting MAE | Winner |
+|--------|-----------------|----------|-------------------|-----------------------|--------|
+| ORCL   | 0.01581         | **0.01425** | 0.01636        | —                     | EWMA |
+| MU     | 0.01692         | **0.01589** | 0.01657        | —                     | EWMA |
+| MSFT   | 0.00824         | 0.00768  | **0.00691**       | 0.00695               | Random Forest |
+
+MSFT figures are from a run on data through 2026-10-02; ORCL and MU predate the
+gradient-boosting comparison.
 
 - For **ORCL** and **MU**, the one-parameter EWMA model beats the feature-rich forest.
   Their volatility is spike-driven, and spikes are best captured by pure persistence.
 - For **MSFT** — a stable mega-cap with lower, more *structured* volatility — the forest
-  finds real signal in the technical features and wins (test R² of +0.14 on the
+  finds real signal in the technical features and wins (test R² of +0.13 on the
   change-in-volatility target).
+- A **gradient boosting regressor** (300 shallow trees, learning rate 0.03, 80% subsample)
+  ties the forest on MSFT (MAE 0.00695 vs. 0.00691, R² +0.10 vs. +0.13). Boosting's
+  usual edge — fitting residual structure — buys nothing here, which suggests the
+  forest is already extracting what signal the features contain.
 
 **The lesson:** no single model dominates. Model choice should be validated per asset;
 complexity helps only when the data has structure the simple model can't capture.
