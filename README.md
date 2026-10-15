@@ -151,6 +151,27 @@ model on all of them together (~7,500 stock-days).
 - The first run takes about 30 minutes (Finnhub's 60 calls/minute × 52 weeks × 30 stocks,
   plus FinBERT scoring). Everything is cached, so reruns take a minute or two.
 
+### Results: 30 stocks, Oct 2025 – Oct 2026
+
+7,410 stock-days: train 4,440, validation 1,470, test 1,500 (Aug 4 – Oct 13, 2026).
+
+| Model | Test MAE (daily return) | Direction accuracy |
+|-------|-------------------------|--------------------|
+| Naive (0% change) | 1.333% | |
+| "Always up" | | 49.7% |
+| Price only (XGBoost) | 1.337% | 50.0% ± 1.3% |
+| Price + FinBERT sentiment | 1.336% | 49.7% ± 1.3% |
+
+Paired difference in absolute error (price only minus price + sentiment):
+**0.0014% ± 0.0016%**, under one standard error, and the error bar is optimistic because
+stocks move together on the same day.
+
+**Conclusion:** across 30 large caps, neither price features nor same-day FinBERT
+headline sentiment improves next-day forecasts over the naive no-change forecast. Public
+headline sentiment appears to be priced in by the close. Validation picked the most
+regularized settings for both models, which is what a model with no signal to learn
+from would do: stay close to "no change".
+
 ## Running it
 
 ```bash
