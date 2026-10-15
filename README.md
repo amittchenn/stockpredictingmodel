@@ -88,8 +88,23 @@ beats the naive forecast (tomorrow's close = today's close).
 - **Predict the return, not the price**: the model predicts tomorrow's return and converts
   it with `close × (1 + predicted return)`. Trees can't extrapolate, so a model trained
   on raw prices can never predict a price above its training range.
-- **Features**: today's return and the close relative to its 20- and 50-day SMAs (ratios
-  again, not price levels).
+- **Price features**: today's return and the close relative to its 20- and 50-day SMAs
+  (ratios again, not price levels).
+- **Sentiment features** (`news.py`): per-ticker news sentiment from Alpha Vantage's
+  `NEWS_SENTIMENT` endpoint, combined into one relevance-weighted score per trading day,
+  plus a 3-day average and the day's article count relative to its 20-day average.
+  - News published at or after the 4pm close is assigned to the **next** trading day,
+    and weekend news to Monday, so a feature never uses news published after the close it
+    sits next to.
+  - The free tier allows 25 calls a day, so news is fetched one calendar month per call,
+    newest first, and cached in `cache/`. Finished months are frozen (Alpha Vantage
+    re-scores articles between calls); the current month is always re-fetched. When the
+    quota runs out the script continues with whatever is cached, and later runs fill in
+    older months.
+  - Days without coverage stay `NaN` and XGBoost handles them as missing values. The
+    script prints sentiment coverage for each split.
+- **Ablation**: the model is trained twice, price-only and price + sentiment, with the
+  same splits and tuning, so the effect of sentiment is measured rather than assumed.
 - **Loss**: `reg:absoluteerror`, so one-off spikes (e.g. ORCL's +36% day in Sept 2025)
   don't dominate training the way they do with squared error.
 - **Train / validation / test split (60/20/20, chronological)**: three hyperparameter
@@ -106,10 +121,13 @@ are there to pull it back toward "no change" unless the features carry real sign
 ## Running it
 
 ```bash
-pip install pandas numpy yfinance pandas_ta scikit-learn xgboost
+pip install pandas numpy yfinance pandas_ta scikit-learn xgboost requests python-dotenv
 python stock.py
 python price_model.py
 ```
+
+For sentiment, get a free key at alphavantage.co and put it in `.env` (see `.env.example`).
+Without a key, `price_model.py` runs price-only.
 
 Change the ticker and history at the top of the file:
 

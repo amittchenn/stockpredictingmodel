@@ -1,10 +1,14 @@
-import yfinance as yf
+import numpy as np
 import pandas as pd
+import yfinance as yf
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error
 
+from news import API_KEY, collect_scores, daily_sentiment
+
 VALID_PERIODS = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
-FEATURES = ['Daily_Return', 'Close_vs_SMA20', 'Close_vs_SMA50']
+PRICE_FEATURES = ['Daily_Return', 'Close_vs_SMA20', 'Close_vs_SMA50']
+SENTIMENT_FEATURES = ['Sent_Mean', 'Sent_3d', 'News_vs_Avg']
 
 SETTINGS = {
     "original":      dict(max_depth=3, n_estimators=200, learning_rate=0.05),
@@ -43,6 +47,15 @@ def add_features(df):
     return df
 
 
+def add_sentiment_features(df, daily):
+    df = df.join(daily)
+    df['Sent_3d'] = df['Sent_Mean'].rolling(3, min_periods=1).mean()
+    # raw article counts drift with the API's coverage, so compare to the recent average instead
+    avg_count = df['News_Count'].rolling(20, min_periods=5).mean()
+    df['News_vs_Avg'] = (df['News_Count'] / avg_count).replace([np.inf, -np.inf], np.nan)
+    return df
+
+
 def split_by_time(data):
     n = len(data)
     train = data.iloc[: int(n * 0.6)]
@@ -55,8 +68,8 @@ def make_model(params):
     return XGBRegressor(objective='reg:absoluteerror', random_state=42, **params)
 
 
-def evaluate(model, part):
-    pred_return = model.predict(part[FEATURES])
+def evaluate(model, part, features):
+    pred_return = model.predict(part[features])
 
     actual_price = part['Close'] * (1 + part['Target'])
     pred_price = part['Close'] * (1 + pred_return)
@@ -66,6 +79,24 @@ def evaluate(model, part):
     naive_mae = mean_absolute_error(actual_price, naive_price)
     direction = ((pred_return > 0) == (part['Target'] > 0)).mean()
     return model_mae, naive_mae, direction
+
+
+def tune_and_fit(train, val, features):
+    val_scores = {}
+    for name, params in SETTINGS.items():
+        model = make_model(params)
+        model.fit(train[features], train['Target'])
+        model_mae, naive_mae, direction = evaluate(model, val, features)
+        val_scores[name] = model_mae
+        print(f"  {name:14} model ${model_mae:.2f}   naive ${naive_mae:.2f}   direction {direction:.1%}")
+
+    best = min(val_scores, key=val_scores.get)
+    print(f"  best on validation: {best}")
+
+    train_val = pd.concat([train, val])
+    model = make_model(SETTINGS[best])
+    model.fit(train_val[features], train_val['Target'])
+    return model, val_scores[best]
 
 
 ticker = ask_ticker()
@@ -78,36 +109,41 @@ while df.empty:
     df = get_prices(ticker, time_period)
 
 df = add_features(df)
-data = df.dropna(subset=FEATURES + ['Target'])
+feature_sets = {"price only": PRICE_FEATURES}
 
+if API_KEY:
+    news, covered = collect_scores(ticker, df.index.min(), df.index.max())
+    df = add_sentiment_features(df, daily_sentiment(news, covered, df.index))
+    feature_sets["price + sentiment"] = PRICE_FEATURES + SENTIMENT_FEATURES
+else:
+    print('No ALPHAVANTAGE_API_KEY found in .env, running price-only.')
+
+# sentiment gaps stay as NaN, XGBoost handles missing values on its own
+data = df.dropna(subset=PRICE_FEATURES + ['Target'])
 train, val, test = split_by_time(data)
+
 for name, part in [("Train", train), ("Val", val), ("Test", test)]:
-    print(f"{name:5} {part.index.min().date()} → {part.index.max().date()}  {len(part)} rows")
+    line = f"{name:5} {part.index.min().date()} → {part.index.max().date()}  {len(part)} rows"
+    if 'News_Count' in part:
+        line += f"   sentiment coverage {part['News_Count'].notna().mean():.0%}"
+    print(line)
 
-# pick hyperparameters on validation only, test stays untouched until the end
-print("\n--- Validation ---")
-val_scores = {}
-for name, params in SETTINGS.items():
-    model = make_model(params)
-    model.fit(train[FEATURES], train['Target'])
-    model_mae, naive_mae, direction = evaluate(model, val)
-    val_scores[name] = model_mae
-    print(f"{name:14} model ${model_mae:.2f}   naive ${naive_mae:.2f}   direction {direction:.1%}")
+results = {}
+for set_name, features in feature_sets.items():
+    print(f"\n--- Validation: {set_name} ---")
+    model, val_mae = tune_and_fit(train, val, features)
+    results[set_name] = (model, features, val_mae, *evaluate(model, test, features))
 
-best = min(val_scores, key=val_scores.get)
-print("Best on validation:", best)
-
-final_model = make_model(SETTINGS[best])
-train_val = pd.concat([train, val])
-final_model.fit(train_val[FEATURES], train_val['Target'])
-
-model_mae, naive_mae, direction = evaluate(final_model, test)
-print("\n--- Test ---")
-print(f"model ${model_mae:.2f}   naive ${naive_mae:.2f}   direction {direction:.1%}")
+print("\n--- Test (looked at once) ---")
 print(f"test baseline 'always up': {(test['Target'] > 0).mean():.1%}")
+for set_name, (_, _, _, model_mae, naive_mae, direction) in results.items():
+    print(f"{set_name:18} model ${model_mae:.2f}   naive ${naive_mae:.2f}   direction {direction:.1%}")
 
+chosen = min(results, key=lambda k: results[k][2])
+model, features = results[chosen][0], results[chosen][1]
 latest = df.iloc[[-1]]
 last_close = latest['Close'].iloc[0]
-pred_ret = final_model.predict(latest[FEATURES])[0]
-print(f"\n{ticker} last close ${last_close:.2f} → predicted next close "
+pred_ret = model.predict(latest[features])[0]
+print(f"\nUsing '{chosen}' (best on validation)")
+print(f"{ticker} last close ${last_close:.2f} → predicted next close "
       f"${last_close * (1 + pred_ret):.2f} ({pred_ret:+.2%})")
