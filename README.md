@@ -10,6 +10,11 @@ The short answer, arrived at empirically:
   200-tree Random Forest** for most stocks.
 - **Which model wins depends on the stock** — ML edges ahead only for stable, structured
   names like MSFT.
+- **Pooled across 30 stocks and trained to correct EWMA**, XGBoost cuts 5-day volatility
+  forecast error by **15%** vs. EWMA (`vol_model.py`).
+- **News sentiment (FinBERT on ~20k Finnhub headlines) adds nothing**: not to next-day
+  price/direction forecasts, and not to volatility forecasts (`multi_model.py`,
+  `vol_model.py`).
 
 ## What the pipeline does
 
@@ -188,6 +193,27 @@ Volatility is partly forecastable (see above), so this asks whether news **volum
   every target looks 5 days ahead and would otherwise overlap the next split.
 - Reports MAE on realized vol for persistence, EWMA, XGBoost price-only and XGBoost
   price + news, with paired standard errors.
+
+### Results: 30 stocks, 5-day realized volatility
+
+Train 4,200, validation 1,320, test 1,470 stock-days (Jul 30 – Oct 7, 2026).
+
+| Forecast | Test MAE (daily vol) | vs. EWMA |
+|----------|----------------------|----------|
+| Persistence (10-day vol) | 0.00773 | -5.0% |
+| EWMA (λ = 0.94) | 0.00736 | |
+| XGBoost correction, price features | 0.00623 | **+15.4%** (0.00113 ± 0.00006) |
+| XGBoost correction, price + news | 0.00623 | +15.5% (0.00114 ± 0.00006) |
+
+- **Building on EWMA works.** The single-stock forest lost to EWMA, but a pooled model that
+  learns a *correction* to EWMA cuts its error by 15%. That's about 18 standard errors;
+  even if overlapping windows and co-movement made the true error bar several times
+  wider, the improvement would still be well outside noise.
+- **News adds nothing on top.** Price + news vs. price-only: 0.000008 ± 0.000012 (0.1%),
+  within one standard error. Headline volume and FinBERT sentiment carry no volatility
+  information beyond what recent returns already show.
+- Caveat: the test window is about 10 weeks of one market regime. Walk-forward testing
+  across more periods is the next step before trusting the 15% figure.
 
 ## Running it
 
