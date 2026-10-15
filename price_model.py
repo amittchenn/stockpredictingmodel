@@ -116,10 +116,13 @@ if API_KEY:
     df = add_sentiment_features(df, daily_sentiment(news, covered, df.index))
     feature_sets["price + sentiment"] = PRICE_FEATURES + SENTIMENT_FEATURES
 else:
-    print('No ALPHAVANTAGE_API_KEY found in .env, running price-only.')
+    print('No FINNHUB_API_KEY found in .env, running price-only.')
 
-# sentiment gaps stay as NaN, XGBoost handles missing values on its own
 data = df.dropna(subset=PRICE_FEATURES + ['Target'])
+if 'News_Count' in data:
+    # compare both models on the same days, and only days the news history covers
+    data = data[data['News_Count'].notna()]
+    print(f'Using the {len(data)} days with news coverage for both models')
 train, val, test = split_by_time(data)
 
 for name, part in [("Train", train), ("Val", val), ("Test", test)]:

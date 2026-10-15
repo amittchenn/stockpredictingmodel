@@ -1,103 +1,112 @@
 import os
 import json
 import time
-from datetime import datetime
+from datetime import date
 
 import pandas as pd
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
-API_KEY = os.getenv('ALPHAVANTAGE_API_KEY')
+API_KEY = os.getenv('FINNHUB_API_KEY')
 CACHE_DIR = 'cache'
-MAX_ARTICLES = 1000
+SCORES_PATH = os.path.join(CACHE_DIR, 'finbert_scores.json')
+HISTORY_DAYS = 365
 
 
 class NewsUnavailable(Exception):
     pass
 
 
-def get_news(ticker, time_from, time_to):
-    time.sleep(1.2)
-    response = requests.get("https://www.alphavantage.co/query", params={
-        "function": "NEWS_SENTIMENT",
-        "tickers": ticker,
-        "limit": MAX_ARTICLES,
-        "time_from": time_from,
-        "time_to": time_to,
-        "apikey": API_KEY,
-    })
-    data = response.json()
-
-    if 'feed' not in data:
-        raise NewsUnavailable(data)
-
-    return data['feed']
-
-
-def cache_path(ticker, time_from, time_to):
-    return os.path.join(CACHE_DIR, f'news_{ticker}_{time_from}_{time_to}.json')
+def get_news(ticker, date_from, date_to):
+    for attempt in range(2):
+        time.sleep(1.1)
+        response = requests.get('https://finnhub.io/api/v1/company-news', params={
+            'symbol': ticker,
+            'from': date_from,
+            'to': date_to,
+            'token': API_KEY,
+        })
+        if response.status_code == 429:
+            print('Finnhub rate limit hit, waiting a minute...')
+            time.sleep(60)
+            continue
+        data = response.json()
+        if not isinstance(data, list):
+            raise NewsUnavailable(data)
+        return data
+    raise NewsUnavailable('still rate limited after waiting')
 
 
-def get_news_cached(ticker, time_from, time_to, allow_api=True, cacheable=True):
+def get_news_cached(ticker, date_from, date_to, cacheable=True):
     os.makedirs(CACHE_DIR, exist_ok=True)
-    path = cache_path(ticker, time_from, time_to)
+    path = os.path.join(CACHE_DIR, f'finnhub_{ticker}_{date_from}_{date_to}.json')
 
     if cacheable and os.path.exists(path):
         with open(path) as f:
             return json.load(f)
-    if not allow_api:
-        return None
 
-    articles = get_news(ticker, time_from, time_to)
+    articles = get_news(ticker, date_from, date_to)
     if cacheable:
         with open(path, 'w') as f:
             json.dump(articles, f)
     return articles
 
 
-def extract_scores(articles, ticker):
-    results = []
-    for article in articles:
-        for ts in article['ticker_sentiment']:
-            if ts['ticker'] == ticker:
-                results.append({
-                    'time': article['time_published'],
-                    'score': float(ts['ticker_sentiment_score']),
-                    'relevance': float(ts['relevance_score']),
-                })
-    return results
+def collect_headlines(ticker, start, end):
+    today = pd.Timestamp(date.today())
+    start = max(start, today - pd.Timedelta(days=HISTORY_DAYS))
+    articles, covered = [], []
+
+    # weeks are anchored on Mondays so the cache file names stay the same between runs
+    for monday in pd.date_range(start, end, freq='W-MON'):
+        sunday = monday + pd.Timedelta(days=6)
+        finished = sunday < today
+        date_to = min(sunday, today)
+        try:
+            week = get_news_cached(ticker, f'{monday:%Y-%m-%d}', f'{date_to:%Y-%m-%d}', cacheable=finished)
+        except NewsUnavailable as e:
+            print(f'Finnhub stopped at week of {monday:%Y-%m-%d}: {e}')
+            break
+        articles += week
+        covered.append((monday, sunday + pd.Timedelta(days=1)))
+
+    print(f'{len(articles)} articles over {len(covered)} weeks')
+    return articles, covered
+
+
+def score_headlines(headlines):
+    scores = {}
+    if os.path.exists(SCORES_PATH):
+        with open(SCORES_PATH) as f:
+            scores = json.load(f)
+
+    missing = sorted(set(headlines) - set(scores))
+    if missing:
+        from transformers import pipeline
+        print(f'Scoring {len(missing)} new headlines with FinBERT...')
+        finbert = pipeline('text-classification', model='ProsusAI/finbert', top_k=None)
+        for headline, result in zip(missing, finbert(missing, batch_size=32, truncation=True)):
+            probs = {r['label']: r['score'] for r in result}
+            scores[headline] = probs['positive'] - probs['negative']
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(SCORES_PATH, 'w') as f:
+            json.dump(scores, f)
+
+    return [scores[h] for h in headlines]
 
 
 def collect_scores(ticker, start, end):
-    rows, covered = [], []
-    allow_api = True
-    now = pd.Timestamp(datetime.now()).floor('min')
-    months = pd.date_range(start.replace(day=1), end, freq='MS')
+    articles, covered = collect_headlines(ticker, start, end)
+    news = pd.DataFrame(articles, columns=['datetime', 'headline'])
+    news = news[news['headline'].str.strip() != ''].drop_duplicates('headline')
+    if news.empty:
+        return pd.DataFrame(columns=['time', 'score']), covered
 
-    for month in reversed(months):
-        next_month = month + pd.offsets.MonthBegin(1)
-        # the current month isn't over yet: ask only up to now and don't freeze it in the cache
-        finished = next_month <= now
-        time_from = month.strftime('%Y%m%dT%H%M')
-        time_to = min(next_month, now).strftime('%Y%m%dT%H%M')
-
-        try:
-            articles = get_news_cached(ticker, time_from, time_to, allow_api, cacheable=finished)
-        except NewsUnavailable as e:
-            print(f'News API stopped at {month:%Y-%m}, using cache only from here: {e}')
-            allow_api = False
-            articles = None
-
-        if articles is None:
-            continue
-        if len(articles) >= MAX_ARTICLES:
-            print(f'Warning: {month:%Y-%m} hit the {MAX_ARTICLES}-article cap, some news is missing')
-
-        rows += extract_scores(articles, ticker)
-        covered.append((month, next_month))
-
-    return pd.DataFrame(rows, columns=['time', 'score', 'relevance']), covered
+    published = pd.to_datetime(news['datetime'], unit='s', utc=True)
+    news['time'] = published.dt.tz_convert('America/New_York').dt.tz_localize(None)
+    news['score'] = score_headlines(news['headline'].tolist())
+    return news[['time', 'score']], covered
 
 
 def daily_sentiment(news, covered, trading_days):
@@ -108,18 +117,14 @@ def daily_sentiment(news, covered, trading_days):
     if news.empty:
         return daily
 
-    published = pd.to_datetime(news['time'], format='%Y%m%dT%H%M%S')
     # news after the 4pm close can only move the next session
-    day = published.dt.normalize() + pd.to_timedelta((published.dt.hour >= 16).astype(int), unit='D')
+    day = news['time'].dt.normalize() + pd.to_timedelta((news['time'].dt.hour >= 16).astype(int), unit='D')
     pos = trading_days.searchsorted(day)
 
     news = news[pos < len(trading_days)].copy()
     news['date'] = trading_days[pos[pos < len(trading_days)]]
-    news['weighted'] = news['score'] * news['relevance']
 
-    per_day = news.groupby('date').agg(weighted=('weighted', 'sum'),
-                                       relevance=('relevance', 'sum'),
-                                       count=('score', 'size'))
-    daily.loc[per_day.index, 'Sent_Mean'] = per_day['weighted'] / per_day['relevance']
-    daily.loc[per_day.index, 'News_Count'] = per_day['count']
+    per_day = news.groupby('date')['score'].agg(['mean', 'size'])
+    daily.loc[per_day.index, 'Sent_Mean'] = per_day['mean']
+    daily.loc[per_day.index, 'News_Count'] = per_day['size']
     return daily
