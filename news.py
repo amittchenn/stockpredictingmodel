@@ -39,19 +39,18 @@ def cache_path(ticker, time_from, time_to):
     return os.path.join(CACHE_DIR, f'news_{ticker}_{time_from}_{time_to}.json')
 
 
-def get_news_cached(ticker, time_from, time_to, allow_api=True):
+def get_news_cached(ticker, time_from, time_to, allow_api=True, cacheable=True):
     os.makedirs(CACHE_DIR, exist_ok=True)
     path = cache_path(ticker, time_from, time_to)
 
-    if os.path.exists(path):
+    if cacheable and os.path.exists(path):
         with open(path) as f:
             return json.load(f)
     if not allow_api:
         return None
 
     articles = get_news(ticker, time_from, time_to)
-    # a window that hasn't ended yet will get more articles, so don't freeze it
-    if datetime.strptime(time_to, '%Y%m%dT%H%M') < datetime.now():
+    if cacheable:
         with open(path, 'w') as f:
             json.dump(articles, f)
     return articles
@@ -73,15 +72,18 @@ def extract_scores(articles, ticker):
 def collect_scores(ticker, start, end):
     rows, covered = [], []
     allow_api = True
+    now = pd.Timestamp(datetime.now()).floor('min')
     months = pd.date_range(start.replace(day=1), end, freq='MS')
 
     for month in reversed(months):
         next_month = month + pd.offsets.MonthBegin(1)
+        # the current month isn't over yet: ask only up to now and don't freeze it in the cache
+        finished = next_month <= now
         time_from = month.strftime('%Y%m%dT%H%M')
-        time_to = next_month.strftime('%Y%m%dT%H%M')
+        time_to = min(next_month, now).strftime('%Y%m%dT%H%M')
 
         try:
-            articles = get_news_cached(ticker, time_from, time_to, allow_api)
+            articles = get_news_cached(ticker, time_from, time_to, allow_api, cacheable=finished)
         except NewsUnavailable as e:
             print(f'News API stopped at {month:%Y-%m}, using cache only from here: {e}')
             allow_api = False
