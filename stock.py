@@ -1,12 +1,11 @@
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import pandas_ta as ta
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 
 TICKER = 'MSFT'
@@ -62,16 +61,33 @@ def build_data_set(ticker: str, years: int) -> pd.DataFrame:
 def add_tech_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    df['sma_10'] = ta.sma(df['Close'], length=10)
-    df['sma_20'] = ta.sma(df['Close'], length=20)
-    df['ema_10'] = ta.ema(df['Close'], length=10)
-    df['rsi_14'] = ta.rsi(df['Close'], length=14)
+    close = df['Close']
 
-    macd = ta.macd(df['Close'])
-    df = pd.concat([df, macd], axis=1)
+    df['sma_10'] = close.rolling(10).mean()
+    df['sma_20'] = close.rolling(20).mean()
+    df['ema_10'] = close.ewm(span=10, adjust=False).mean()
 
-    bbands = ta.bbands(df['Close'], length=20)
-    df = pd.concat([df, bbands], axis=1)
+    # RSI(14), Wilder's smoothing (alpha = 1/length), same as pandas_ta's default
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+    df['rsi_14'] = 100 - 100 / (1 + gain / loss)
+
+    # MACD(12, 26, 9): fast EMA - slow EMA, signal = EMA(9) of that, histogram = difference
+    ema_12 = close.ewm(span=12, adjust=False).mean()
+    ema_26 = close.ewm(span=26, adjust=False).mean()
+    df['MACD_12_26_9']  = ema_12 - ema_26
+    df['MACDs_12_26_9'] = df['MACD_12_26_9'].ewm(span=9, adjust=False).mean()
+    df['MACDh_12_26_9'] = df['MACD_12_26_9'] - df['MACDs_12_26_9']
+
+    # Bollinger Bands(20, 2): middle = SMA, upper/lower = +/- 2 std, bandwidth and %B
+    bb_mid = close.rolling(20).mean()
+    bb_std = close.rolling(20).std(ddof=0)
+    df['BBM_20_2.0'] = bb_mid
+    df['BBU_20_2.0'] = bb_mid + 2 * bb_std
+    df['BBL_20_2.0'] = bb_mid - 2 * bb_std
+    df['BBB_20_2.0'] = (df['BBU_20_2.0'] - df['BBL_20_2.0']) / bb_mid * 100
+    df['BBP_20_2.0'] = (close - df['BBL_20_2.0']) / (df['BBU_20_2.0'] - df['BBL_20_2.0'])
 
     df['close_vs_sma10'] = df['Close'] / df['sma_10'] - 1
     df['close_vs_sma20'] = df['Close'] / df['sma_20'] - 1
@@ -144,6 +160,27 @@ for name, fc in [('Persistence', persistence_fc),
                  ('EWMA',        ewma_fc),
                  ('RandomForest', rf_fc)]:
     print(f"{name:13s}  MAE: {mean_absolute_error(truth, fc):.5f}   R²: {r2_score(truth, fc):.3f}")
+
+# --- Gradient boosting: many shallow trees, each correcting the last one's errors ---
+gbr = GradientBoostingRegressor(
+    n_estimators=300,      # more trees, smaller steps -> less overfitting on noisy rows
+    learning_rate=0.03,
+    max_depth=3,           # weak learners; the forest uses deep trees, boosting should not
+    subsample=0.8,         # each tree sees 80% of rows, same variance reduction as bagging
+    random_state=42,
+)
+gbr.fit(X_train, Y_train)
+gbr_pred = gbr.predict(X_test)
+gbr_fc = test['10d_volatility'] * np.exp(gbr_pred)
+
+print("\n--- Gradient Boosting (volatility) ---")
+print(f"Model MAE (log-vol change): {mean_absolute_error(Y_test, gbr_pred):.5f}")
+print(f"Model R²  (log-vol change): {r2_score(Y_test, gbr_pred):.3f}")
+print(f"{'GradBoost':13s}  MAE: {mean_absolute_error(truth, gbr_fc):.5f}   R²: {r2_score(truth, gbr_fc):.3f}")
+
+gb_scores = cross_val_score(gbr, X, Y, cv=tscv, scoring='r2')
+print("GB CV R² scores:", gb_scores)
+print("Mean GB CV R²:", gb_scores.mean())
 
 train = result_clean.iloc[:split_index]
 test  = result_clean.iloc[split_index:]
