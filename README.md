@@ -224,8 +224,8 @@ Train 4,200, validation 1,320, test 1,470 stock-days (Jul 30 – Oct 7, 2026).
 
 ## Running it
 
+```bash
 pip install pandas numpy yfinance scikit-learn xgboost requests python-dotenv transformers torch
-pip install pandas numpy yfinance scikit-learn
 python stock.py
 python price_model.py
 python multi_model.py
