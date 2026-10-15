@@ -135,12 +135,29 @@ the same thing: price-only hit 61% direction accuracy on validation and fell to 
 on test. The honest conclusion for a single stock over one year is that **no edge is
 detectable**. A real test needs more data, e.g. pooling many tickers.
 
+## Pooled across 30 stocks (`multi_model.py`)
+
+One stock over one year leaves ~50 test days, far too few to detect a small edge. This
+script runs the same pipeline on 30 large caps across sectors and trains **one** XGBoost
+model on all of them together (~7,500 stock-days).
+
+- Splits are made on **calendar dates**, not rows, so no stock's future can leak into
+  another stock's training data.
+- Errors are measured on returns (%) instead of dollars, so a $500 stock doesn't dominate
+  a $50 one. The naive forecast is a 0% return.
+- Price-only vs. price + sentiment is compared on the same stock-days, with the paired
+  difference in absolute error and its standard error. Stocks move together on the same
+  day, so these errors understate the real uncertainty.
+- The first run takes about 30 minutes (Finnhub's 60 calls/minute × 52 weeks × 30 stocks,
+  plus FinBERT scoring). Everything is cached, so reruns take a minute or two.
+
 ## Running it
 
 ```bash
 pip install pandas numpy yfinance pandas_ta scikit-learn xgboost requests python-dotenv transformers torch
 python stock.py
 python price_model.py
+python multi_model.py
 ```
 
 For sentiment, get a free key at finnhub.io and put it in `.env` (see `.env.example`).

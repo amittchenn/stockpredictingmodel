@@ -75,6 +75,17 @@ def collect_headlines(ticker, start, end):
     return articles, covered
 
 
+_finbert = None
+
+
+def load_finbert():
+    global _finbert
+    if _finbert is None:
+        from transformers import pipeline
+        _finbert = pipeline('text-classification', model='ProsusAI/finbert', top_k=None)
+    return _finbert
+
+
 def score_headlines(headlines):
     scores = {}
     if os.path.exists(SCORES_PATH):
@@ -83,9 +94,8 @@ def score_headlines(headlines):
 
     missing = sorted(set(headlines) - set(scores))
     if missing:
-        from transformers import pipeline
         print(f'Scoring {len(missing)} new headlines with FinBERT...')
-        finbert = pipeline('text-classification', model='ProsusAI/finbert', top_k=None)
+        finbert = load_finbert()
         for headline, result in zip(missing, finbert(missing, batch_size=32, truncation=True)):
             probs = {r['label']: r['score'] for r in result}
             scores[headline] = probs['positive'] - probs['negative']

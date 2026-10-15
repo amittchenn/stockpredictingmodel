@@ -99,54 +99,59 @@ def tune_and_fit(train, val, features):
     return model, val_scores[best]
 
 
-ticker = ask_ticker()
-time_period = ask_time_period()
-df = get_prices(ticker, time_period)
-
-while df.empty:
-    print(f'No data found for {ticker}. Check the symbol and try again.')
+def main():
     ticker = ask_ticker()
+    time_period = ask_time_period()
     df = get_prices(ticker, time_period)
 
-df = add_features(df)
-feature_sets = {"price only": PRICE_FEATURES}
+    while df.empty:
+        print(f'No data found for {ticker}. Check the symbol and try again.')
+        ticker = ask_ticker()
+        df = get_prices(ticker, time_period)
 
-if API_KEY:
-    news, covered = collect_scores(ticker, df.index.min(), df.index.max())
-    df = add_sentiment_features(df, daily_sentiment(news, covered, df.index))
-    feature_sets["price + sentiment"] = PRICE_FEATURES + SENTIMENT_FEATURES
-else:
-    print('No FINNHUB_API_KEY found in .env, running price-only.')
+    df = add_features(df)
+    feature_sets = {"price only": PRICE_FEATURES}
 
-data = df.dropna(subset=PRICE_FEATURES + ['Target'])
-if 'News_Count' in data:
-    # compare both models on the same days, and only days the news history covers
-    data = data[data['News_Count'].notna()]
-    print(f'Using the {len(data)} days with news coverage for both models')
-train, val, test = split_by_time(data)
+    if API_KEY:
+        news, covered = collect_scores(ticker, df.index.min(), df.index.max())
+        df = add_sentiment_features(df, daily_sentiment(news, covered, df.index))
+        feature_sets["price + sentiment"] = PRICE_FEATURES + SENTIMENT_FEATURES
+    else:
+        print('No FINNHUB_API_KEY found in .env, running price-only.')
 
-for name, part in [("Train", train), ("Val", val), ("Test", test)]:
-    line = f"{name:5} {part.index.min().date()} → {part.index.max().date()}  {len(part)} rows"
-    if 'News_Count' in part:
-        line += f"   sentiment coverage {part['News_Count'].notna().mean():.0%}"
-    print(line)
+    data = df.dropna(subset=PRICE_FEATURES + ['Target'])
+    if 'News_Count' in data:
+        # compare both models on the same days, and only days the news history covers
+        data = data[data['News_Count'].notna()]
+        print(f'Using the {len(data)} days with news coverage for both models')
+    train, val, test = split_by_time(data)
 
-results = {}
-for set_name, features in feature_sets.items():
-    print(f"\n--- Validation: {set_name} ---")
-    model, val_mae = tune_and_fit(train, val, features)
-    results[set_name] = (model, features, val_mae, *evaluate(model, test, features))
+    for name, part in [("Train", train), ("Val", val), ("Test", test)]:
+        line = f"{name:5} {part.index.min().date()} → {part.index.max().date()}  {len(part)} rows"
+        if 'News_Count' in part:
+            line += f"   sentiment coverage {part['News_Count'].notna().mean():.0%}"
+        print(line)
 
-print("\n--- Test (looked at once) ---")
-print(f"test baseline 'always up': {(test['Target'] > 0).mean():.1%}")
-for set_name, (_, _, _, model_mae, naive_mae, direction) in results.items():
-    print(f"{set_name:18} model ${model_mae:.2f}   naive ${naive_mae:.2f}   direction {direction:.1%}")
+    results = {}
+    for set_name, features in feature_sets.items():
+        print(f"\n--- Validation: {set_name} ---")
+        model, val_mae = tune_and_fit(train, val, features)
+        results[set_name] = (model, features, val_mae, *evaluate(model, test, features))
 
-chosen = min(results, key=lambda k: results[k][2])
-model, features = results[chosen][0], results[chosen][1]
-latest = df.iloc[[-1]]
-last_close = latest['Close'].iloc[0]
-pred_ret = model.predict(latest[features])[0]
-print(f"\nUsing '{chosen}' (best on validation)")
-print(f"{ticker} last close ${last_close:.2f} → predicted next close "
-      f"${last_close * (1 + pred_ret):.2f} ({pred_ret:+.2%})")
+    print("\n--- Test (looked at once) ---")
+    print(f"test baseline 'always up': {(test['Target'] > 0).mean():.1%}")
+    for set_name, (_, _, _, model_mae, naive_mae, direction) in results.items():
+        print(f"{set_name:18} model ${model_mae:.2f}   naive ${naive_mae:.2f}   direction {direction:.1%}")
+
+    chosen = min(results, key=lambda k: results[k][2])
+    model, features = results[chosen][0], results[chosen][1]
+    latest = df.iloc[[-1]]
+    last_close = latest['Close'].iloc[0]
+    pred_ret = model.predict(latest[features])[0]
+    print(f"\nUsing '{chosen}' (best on validation)")
+    print(f"{ticker} last close ${last_close:.2f} → predicted next close "
+          f"${last_close * (1 + pred_ret):.2f} ({pred_ret:+.2%})")
+
+
+if __name__ == "__main__":
+    main()
