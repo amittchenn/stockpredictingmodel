@@ -118,6 +118,23 @@ unregularized model made large, confident daily calls (predicted-return std ≈ 
 the real returns' own spread) and lost to the naive forecast. The more cautious settings
 are there to pull it back toward "no change" unless the features carry real signal.
 
+### Results: ORCL, Oct 2025 – Oct 2026 (247 trading days with news)
+
+Train 148 days, validation 49, test 50. Test period only:
+
+| Model | Price MAE | Naive MAE | Direction accuracy |
+|-------|-----------|-----------|--------------------|
+| Price only (XGBoost) | $4.00 | $3.92 | 54.0% |
+| Price + FinBERT sentiment | $3.93 | $3.92 | 52.0% |
+| "Always up" baseline | | | 48.0% |
+
+Neither model beats the naive forecast, and sentiment doesn't measurably change the
+result. With 50 test days, one standard error of a direction accuracy is about ±7
+points, so 52–54% can't be told apart from a coin flip. The validation set shows
+the same thing: price-only hit 61% direction accuracy on validation and fell to 54%
+on test. The honest conclusion for a single stock over one year is that **no edge is
+detectable**. A real test needs more data, e.g. pooling many tickers.
+
 ## Running it
 
 ```bash
