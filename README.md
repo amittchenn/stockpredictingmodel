@@ -172,6 +172,23 @@ headline sentiment appears to be priced in by the close. Validation picked the m
 regularized settings for both models, which is what a model with no signal to learn
 from would do: stay close to "no change".
 
+## Does news forecast volatility? (`vol_model.py`)
+
+Same-day sentiment didn't predict direction, but direction is the hardest target.
+Volatility is partly forecastable (see above), so this asks whether news **volume** and
+**sentiment** help forecast realized volatility over the next 5 days.
+
+- Instead of competing with EWMA from scratch, XGBoost predicts the **correction** to it:
+  the target is `log(future 5-day vol / EWMA vol)` and the forecast is
+  `EWMA × exp(prediction)`. This is the "build on top of the strong baseline" extension.
+- Price features: 10-day vol vs EWMA, today's absolute return vs EWMA, 5-day return, close
+  vs 20-day SMA. News features: today's and 3-day headline counts vs their 20-day average,
+  FinBERT sentiment and its absolute value.
+- Same 30 stocks, split by calendar date, with a 5-trading-day gap before each cut, since
+  every target looks 5 days ahead and would otherwise overlap the next split.
+- Reports MAE on realized vol for persistence, EWMA, XGBoost price-only and XGBoost
+  price + news, with paired standard errors.
+
 ## Running it
 
 ```bash
@@ -179,6 +196,7 @@ pip install pandas numpy yfinance pandas_ta scikit-learn xgboost requests python
 python stock.py
 python price_model.py
 python multi_model.py
+python vol_model.py
 ```
 
 For sentiment, get a free key at finnhub.io and put it in `.env` (see `.env.example`).
