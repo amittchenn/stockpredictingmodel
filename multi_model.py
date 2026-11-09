@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from sklearn.metrics import roc_auc_score
 
 from news import API_KEY, collect_scores, daily_sentiment
 from price_model import (PRICE_FEATURES, SENTIMENT_FEATURES, SETTINGS, get_prices,
@@ -91,16 +92,18 @@ def main():
         print(f"\n--- Validation: {set_name} ---")
         model = tune_and_fit(train, val, features)
         pred, err = abs_errors(model, test, features)
-        results[set_name] = (err, (pred > 0) == up)
+        # the predicted return ranks stock-days from most to least likely to go up
+        auc = roc_auc_score(up, pred)
+        results[set_name] = (err, (pred > 0) == up, auc)
 
     n = len(test)
     print(f"\n--- Test, looked at once ({n} stock-days) ---")
     print(f"{'naive (no change)':18} MAE {np.abs(test['Target']).mean():.3%}")
-    print(f"{'always up':18} direction {up.mean():.1%}")
-    for set_name, (err, correct) in results.items():
+    print(f"{'always up':18} direction {up.mean():.1%}   AUC 0.500")
+    for set_name, (err, correct, auc) in results.items():
         acc = correct.mean()
         se = np.sqrt(acc * (1 - acc) / n)
-        print(f"{set_name:18} MAE {err.mean():.3%}   direction {acc:.1%} ± {se:.1%}")
+        print(f"{set_name:18} MAE {err.mean():.3%}   direction {acc:.1%} ± {se:.1%}   AUC {auc:.3f}")
 
     diff = results["price only"][0] - results["price + sentiment"][0]
     se = diff.std(ddof=1) / np.sqrt(n)

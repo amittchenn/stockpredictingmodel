@@ -163,20 +163,28 @@ model on all of them together (~7,500 stock-days).
 - The first run takes about 30 minutes (Finnhub's 60 calls/minute × 52 weeks × 30 stocks,
   plus FinBERT scoring). Everything is cached, so reruns take a minute or two.
 
-### Results: 30 stocks, Oct 2025 – Oct 2026
+### Results: 30 stocks, Nov 2025 – Nov 2026
 
-7,410 stock-days: train 4,440, validation 1,470, test 1,500 (Aug 4 – Oct 13, 2026).
+7,500 stock-days: train 4,500, validation 1,500, test 1,500 (Aug 28 – Nov 6, 2026).
 
-| Model | Test MAE (daily return) | Direction accuracy |
-|-------|-------------------------|--------------------|
-| Naive (0% change) | 1.333% | |
-| "Always up" | | 49.7% |
-| Price only (XGBoost) | 1.337% | 50.0% ± 1.3% |
-| Price + FinBERT sentiment | 1.336% | 49.7% ± 1.3% |
+| Model | Test MAE (daily return) | Direction accuracy | ROC AUC |
+|-------|-------------------------|--------------------|---------|
+| Naive (0% change) | 1.582% | | |
+| "Always up" | | 49.4% | 0.500 |
+| Price only (XGBoost) | 1.585% | 49.4% ± 1.3% | 0.479 |
+| Price + FinBERT sentiment | 1.584% | 49.4% ± 1.3% | 0.488 |
+
+AUC uses the predicted return as the score. With 1,500 test days, one standard error of
+the AUC is about 0.015, so both values are consistent with chance. Direction accuracy
+equals "always up" because the validation-chosen "very cautious" settings shrink every
+prediction to a small positive return.
 
 Paired difference in absolute error (price only minus price + sentiment):
-**0.0014% ± 0.0016%**, under one standard error, and the error bar is optimistic because
-stocks move together on the same day.
+**0.0002% ± 0.0001%**. That's about two standard errors but far too small to matter, and
+the error bar is optimistic because stocks move together on the same day.
+
+An earlier run (test Aug 4 – Oct 13, 2026, 7,410 stock-days) gave the same picture:
+direction 50.0% (price only) and 49.7% (+ sentiment) vs. 49.7% "always up".
 
 **Conclusion:** across 30 large caps, neither price features nor same-day FinBERT
 headline sentiment improves next-day forecasts over the naive no-change forecast. Public
